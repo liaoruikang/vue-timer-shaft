@@ -149,25 +149,52 @@ export default {
     },
     down(e) {
       window.addEventListener("mousemove", this.move);
-      const rect = this.$refs.mainRef.getBoundingClientRect();
+      const rect = this.$refs.axisRef.getBoundingClientRect();
       this.downX = e.pageX - rect.left;
     },
     move(e) {
       this.isMove = true;
       const rect = this.$refs.mainRef.getBoundingClientRect();
-      let x = e.pageX - rect.left;
-      if (x < this.downX) {
-        this.currentTimestamp +=
-          1000 * this.proportion * Math.abs(this.downX - x);
-      } else {
-        this.currentTimestamp -=
-          1000 * this.proportion * Math.abs(this.downX - x);
+      let x = e.pageX - rect.left - this.downX;
+      if (x > -(this.infoWidth / 2 - this.$refs.mainRef.offsetWidth / 2)) {
+        x = -(this.infoWidth / 2 - this.$refs.mainRef.offsetWidth / 2);
+      } else if (
+        x <
+        -(
+          this.infoWidth / 2 -
+          this.$refs.mainRef.offsetWidth / 2 +
+          this.infoWidth
+        ) *
+          (this.timeLimit() / 86400000)
+      ) {
+        x =
+          -(
+            this.infoWidth / 2 -
+            this.$refs.mainRef.offsetWidth / 2 +
+            this.infoWidth
+          ) *
+          (this.timeLimit() / 86400000);
       }
-      this.currentTimestamp = this.timeLimit(this.currentTimestamp);
-      this.downX = x;
+      this.currentTimestamp =
+        ((Math.abs(x) -
+          this.infoWidth / 2 +
+          this.$refs.mainRef.offsetWidth / 2) /
+          this.infoWidth) *
+        86400000;
+      this.currentTimestamp = this.calibration(this.currentTimestamp);
       this.currentTime = this.formatTime(this.currentTimestamp);
-      this.location();
+      this.left = x;
       this.initAxis();
+      // if (x < this.downX) {
+      //   this.currentTimestamp += 500 * this.proportion * Math.abs(this.downX - x)
+      // } else {
+      //   this.currentTimestamp -= 500 * this.proportion * Math.abs(this.downX - x)
+      // }
+      // this.currentTimestamp = this.timeLimit(this.currentTimestamp)
+      // this.downX = x
+      // this.currentTime = this.formatTime(this.currentTimestamp)
+      // this.location()
+      // this.initAxis()
     },
     up() {
       setTimeout(() => {
@@ -343,6 +370,7 @@ export default {
       }-${new Date().getDate()}`;
       if (this.currentDate == today) {
         if (type == "deafult") {
+          if (timestamp == undefined) return this.formatTime(null, "timestamp");
           timestamp = this.calibration(timestamp);
           return timestamp < 0
             ? 0
@@ -358,6 +386,7 @@ export default {
         }
       } else {
         if (type == "deafult") {
+          if (timestamp == undefined) return 86399000;
           timestamp = this.calibration(timestamp);
           return timestamp < 0
             ? 0
