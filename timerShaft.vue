@@ -46,13 +46,17 @@ export default {
       type: String,
       default: "",
     },
+    value: {
+      type: String,
+      default: "00:00:00",
+    },
   },
   data() {
     return {
       lineList: [],
       left: 0,
       infoWidth: 0,
-      currentTime: "00:00:00",
+      currentTime: this.value,
       currentTimestamp: 0,
       proportion: 120,
       zoom: 120,
@@ -65,6 +69,13 @@ export default {
     currentDate() {
       this.currentTimestamp = this.timeLimit(this.currentTimestamp);
       this.currentTime = this.formatTime(this.currentTimestamp);
+      this.$nextTick(() => {
+        this.$emit("input", this.currentTime);
+        this.$emit("change", {
+          start_time: this.currentTime,
+          start_timestamp: this.currentTimestamp,
+        });
+      });
       this.$refs.axisRef.style.transition = "left 0.3s";
       setTimeout(() => {
         this.$refs.axisRef.style.transition = "none";
@@ -74,7 +85,15 @@ export default {
     },
   },
   mounted() {
+    // 初始化时间
     this.initAxis();
+    this.currentTimestamp = this.timeLimit(
+      this.formatTime(this.currentTime, "timestamp")
+    );
+    this.currentTime = this.formatTime(this.currentTimestamp);
+    this.location();
+    this.initAxis();
+
     window.addEventListener("resize", this.resize);
     window.addEventListener("mouseup", this.up);
     window.addEventListener("keydown", this.keydown);
@@ -133,11 +152,22 @@ export default {
         s = s < 10 ? `0${s}` : s;
         return `${h}:${m}:${s}`;
       } else if (type == "timestamp") {
-        const date = new Date();
-        let timestamp = date.getHours() * 60 * 60 * 1000;
-        timestamp += date.getMinutes() * 60 * 1000;
-        timestamp += date.getSeconds() * 1000;
-        return timestamp;
+        if (!isNaN(time?.split(":")[0])) {
+          let [h, m, s] = time.split(":").map((item) => {
+            return parseInt(item);
+          });
+          h = h * 1000 * 60 * 60;
+          m = m * 1000 * 60;
+          s = s * 1000;
+          console.log(h + m + s);
+          return h + m + s;
+        } else {
+          const date = new Date();
+          let timestamp = date.getHours() * 60 * 60 * 1000;
+          timestamp += date.getMinutes() * 60 * 1000;
+          timestamp += date.getSeconds() * 1000;
+          return timestamp;
+        }
       }
     },
     location() {
@@ -198,11 +228,13 @@ export default {
     },
     up() {
       setTimeout(() => {
-        this.isMove &&
+        if (this.isMove) {
+          this.$emit("input", this.currentTime);
           this.$emit("change", {
             start_time: this.currentTime,
             start_timestamp: this.currentTimestamp,
           });
+        }
         this.isMove = false;
       }, 0);
       window.removeEventListener("mousemove", this.move);
@@ -297,10 +329,12 @@ export default {
         (offsetX / this.infoWidth) * 86400000
       );
       this.currentTime = this.formatTime(this.currentTimestamp);
+      this.$emit("input", this.currentTime);
       this.$emit("change", {
         start_time: this.currentTime,
         start_timestamp: this.currentTimestamp,
       });
+
       this.$refs.axisRef.style.transition = "left 0.3s";
       setTimeout(() => {
         this.$refs.axisRef.style.transition = "none";
@@ -343,6 +377,7 @@ export default {
     keyup(e) {
       if (e.keyCode == 37 || e.keyCode == 39) {
         clearTimeout(this.timer);
+        this.$emit("input", this.currentTime);
         this.timer = setTimeout(() => {
           this.$emit("change", {
             start_time: this.currentTime,
@@ -434,12 +469,6 @@ export default {
       return {
         min,
         max,
-      };
-    },
-    getCurrentTime() {
-      return {
-        start_time: this.currentTime,
-        start_timestamp: this.currentTimestamp,
       };
     },
   },
