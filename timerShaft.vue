@@ -1,307 +1,422 @@
 <template>
-  <div class="timeline_container" ref="main" @mousedown="down" @wheel="wheel">
-    <div class="scaleplate" ref="scaleplateRef"></div>
-    <span class="currentTime">{{ time + " " + currentTime }}</span>
+  <div
+    class="timeline_container"
+    ref="mainRef"
+    @mousedown="down"
+    @wheel="wheel"
+  >
+    <div class="scaleplate" style="width: 1px" ref="scaleplateRef"></div>
+    <span class="currentTime">{{ currentDate + " " + currentTime }}</span>
     <div
       class="timeline_content"
-      ref="contentRef"
-      :style="{ left: left + 'px', width: inWidth + 'px' }"
+      ref="axisRef"
+      :style="{ left: left + 'px' }"
+      @click="jump"
     >
-      <template v-for="(item, index) in lineList">
-        <div
-          class="time"
-          v-if="item.show"
-          :key="index"
-          :style="{ left: item.left + 'px' }"
+      <div
+        class="time"
+        v-for="(item, index) in lineList"
+        :this.key="index"
+        :style="{ left: item.left + 'px', width: '1px' }"
+      >
+        <span
+          class="time_item"
+          :style="
+            !timeLimit(item.timestamp - 86400000, 'boolean') &&
+            'color: #99999950'
+          "
+          >{{ item.time }}</span
         >
-          <span class="time_item">{{ item.time }}</span>
-          <span class="line"></span>
-        </div>
-      </template>
+        <span
+          :class="item.lineType"
+          :style="
+            !timeLimit(item.timestamp - 86400000, 'boolean') &&
+            'background-color: #ffffff30'
+          "
+        ></span>
+      </div>
     </div>
   </div>
 </template>
 <script>
 export default {
   name: "timeline",
+  props: {
+    currentDate: {
+      type: String,
+      default: "",
+    },
+  },
   data() {
     return {
-      time: "",
+      lineList: [],
+      left: 0,
+      infoWidth: 0,
       currentTime: "00:00:00",
       currentTimestamp: 0,
-      isDown: false,
-      left: 0,
-      downX: 0,
+      proportion: 120,
+      zoom: 120,
+      isMove: false,
       timer: null,
-      inWidth: 0,
-      zoom: 1,
-      lineList: [],
-      downTime: "",
-      timer: null,
-      // 精度 初始每15秒一像素
-      precision: 15,
+      intervalTimer: null,
     };
   },
-  props: {
-    day: {
-      type: Date,
-      default: () => new Date(),
-    },
-  },
   watch: {
-    day: {
-      deep: true,
-      immediate: true,
-      handler() {
-        let year = this.day.getFullYear();
-        let month = this.day.getMonth() + 1;
-        let day = this.day.getDate();
-        month = month < 10 ? "0" + month : month + "";
-        day = day < 10 ? "0" + day : day + "";
-        this.time = `${year}-${month}-${day}`;
-        this.$nextTick(() => {
-          this.updateTimeLine();
-        });
-      },
+    currentDate() {
+      this.currentTimestamp = this.timeLimit(this.currentTimestamp);
+      this.currentTime = this.formatTime(this.currentTimestamp);
+      this.$refs.axisRef.style.transition = "left 0.3s";
+      setTimeout(() => {
+        this.$refs.axisRef.style.transition = "none";
+      }, 300);
+      this.location();
+      this.initAxis();
     },
-  },
-  beforeDestroy() {
-    clearInterval(this.timer);
   },
   mounted() {
-    this.updateTimeLine();
-    this.timer = setInterval(() => {
-      this.updateTimeLine();
+    this.initAxis();
+    window.addEventListener("resize", this.resize);
+    window.addEventListener("mouseup", this.up);
+    window.addEventListener("keydown", this.keydown);
+    window.addEventListener("keyup", this.keyup);
+    clearInterval(this.intervalTimer);
+    this.intervalTimer = setInterval(() => {
+      this.$forceUpdate();
     }, 1000);
-    this.init();
-    window.addEventListener("mouseup", () => {
-      if (this.isDown) this.up();
-    });
-    window.addEventListener("mousemove", this.move);
+  },
+  beforeDestroy() {
+    window.removeEventListener("resize", this.resize);
+    window.removeEventListener("mouseup", this.up);
+    window.removeEventListener("keydown", this.keydown);
+    window.addEventListener("keyup", this.keyup);
+    clearInterval(this.intervalTimer);
   },
   methods: {
-    // 初始化位置
-    init() {
-      this.left = this.$refs.scaleplateRef.offsetLeft;
+    resize() {
+      this.initAxis();
+      this.location();
     },
-    // 获取当前时分秒时间戳
-    getTimestamp() {
-      const currentH = new Date().getHours();
-      const currentM = new Date().getMinutes();
-      const currentS = new Date().getSeconds();
-      let year = new Date().getFullYear();
-      let month = new Date().getMonth() + 1;
-      let day = new Date().getDate();
-      month = month < 10 ? "0" + month : month + "";
-      day = day < 10 ? "0" + day : day + "";
-      if (this.time == `${year}-${month}-${day}`) {
-        return (
-          1000 * currentS + 1000 * 60 * currentM + 1000 * 60 * 60 * currentH
-        );
-      } else {
-        return 1000 * 60 * 60 * 24;
-      }
-    },
-    // 判断当前刻度是否在可视范围内
-    isVisible(target) {
-      if (
-        target.left + this.left > -5 &&
-        target.left + this.left < this.$refs.main.offsetWidth + 5
-      )
-        return true;
-      return false;
-    },
-    // 初始化时间列表
-    updateTimeLine() {
-      const timestamp = this.getTimestamp();
-      // 设置时间轴长度
-      const newWidth =
-        timestamp /
-        1000 /
-        (this.precision * this.zoom < 1 ? 1 : this.precision * this.zoom);
-      this.inWidth = newWidth;
-      const list = [];
-      let newTimestamp = 0;
-      while (newTimestamp <= timestamp) {
-        // 将时间戳转换为时间格式
-        time = this.formatTime(newTimestamp);
-        // 计算每个时间线位置
-        const proportion = newTimestamp / timestamp;
-        const left = this.inWidth * proportion;
-        // 获取当前刻度可视状态 只渲染可视范围内的刻度
-        let show = this.isVisible({ left });
-        if (left <= this.inWidth) {
-          list.push({
-            time,
+    initAxis() {
+      this.infoWidth = (120 / this.proportion) * this.$refs.mainRef.offsetWidth;
+      this.$refs.axisRef.style.width = this.infoWidth * 2 + "px";
+      const { min, max } = this.getTimestampLimit();
+      let timestamp = min;
+      let i = 0;
+      this.lineList = [];
+      while (timestamp <= max) {
+        const left =
+          (timestamp / 86400000) * this.infoWidth - this.infoWidth / 2;
+        const x =
+          (this.currentTimestamp / 86400000) * this.infoWidth +
+          this.infoWidth / 2 -
+          this.$refs.mainRef.offsetWidth / 2;
+        if (left >= x - 30 && left <= x + this.$refs.mainRef.offsetWidth + 30) {
+          this.lineList.push({
+            time: i % 10 == 0 ? this.formatTime(timestamp) : "",
+            timestamp,
             left,
-            show,
+            lineType: i % 10 == 0 ? "line" : "simpleLine",
           });
         }
-        // 对不同精度显示不同时间段刻度
-        const step = (this.precision * this.zoom) / this.precision;
-        if (step <= 0.95 && step > 0.9) {
-          newTimestamp += 1000 * 60 * 110;
-        } else if (step <= 0.9 && step > 0.85) {
-          newTimestamp += 1000 * 60 * 100;
-        } else if (step <= 0.85 && step > 0.8) {
-          newTimestamp += 1000 * 60 * 90;
-        } else if (step <= 0.8 && step > 0.75) {
-          newTimestamp += 1000 * 60 * 80;
-        } else if (step <= 0.75 && step > 0.7) {
-          newTimestamp += 1000 * 60 * 70;
-        } else if (step <= 0.7 && step > 0.65) {
-          newTimestamp += 1000 * 60 * 60;
-        } else if (step <= 0.65 && step > 0.6) {
-          newTimestamp += 1000 * 60 * 50;
-        } else if (step <= 0.6 && step > 0.55) {
-          newTimestamp += 1000 * 60 * 40;
-        } else if (step <= 0.55 && step > 0.5) {
-          newTimestamp += 1000 * 60 * 34;
-        } else if (step <= 0.5 && step > 0.45) {
-          newTimestamp += 1000 * 60 * 28;
-        } else if (step <= 0.45 && step > 0.4) {
-          newTimestamp += 1000 * 60 * 22;
-        } else if (step <= 0.4 && step > 0.35) {
-          newTimestamp += 1000 * 60 * 16;
-        } else if (step <= 0.35 && step > 0.3) {
-          newTimestamp += 1000 * 60 * 13;
-        } else if (step <= 0.3 && step > 0.25) {
-          newTimestamp += 1000 * 60 * 10;
-        } else if (step <= 0.25 && step > 0.2) {
-          newTimestamp += 1000 * 60 * 8;
-        } else if (step <= 0.2 && step > 0.15) {
-          newTimestamp += 1000 * 60 * 6;
-        } else if (step <= 0.15 && step > 0.1) {
-          newTimestamp += 1000 * 60 * 4;
-        } else if (step <= 0.1 && step > 0.05) {
-          newTimestamp += 1000 * 60 * 2;
-        } else if (step <= 0.05) {
-          newTimestamp += 1000 * 60 * 1;
-        } else {
-          newTimestamp += 1000 * 60 * 120;
-        }
+        timestamp += 86400000 / this.zoom;
+        i++;
       }
-      this.lineList = list;
-      this.$nextTick(() => {
-        this.location();
-      });
     },
-    // 根据当前选中时间戳更新时间轴位置
+    formatTime(time, type = "time") {
+      if (type == "time") {
+        if (typeof time != "number") return null;
+        let h = parseInt((time / 1000 / 60 / 60) % 24);
+        let m = parseInt((time / 1000 / 60) % 60);
+        let s = parseInt((time / 1000) % 60);
+        h = h < 10 ? `0${h}` : h;
+        m = m < 10 ? `0${m}` : m;
+        s = s < 10 ? `0${s}` : s;
+        return `${h}:${m}:${s}`;
+      } else if (type == "timestamp") {
+        const date = new Date();
+        let timestamp = date.getHours() * 60 * 60 * 1000;
+        timestamp += date.getMinutes() * 60 * 1000;
+        timestamp += date.getSeconds() * 1000;
+        return timestamp;
+      }
+    },
     location() {
-      const timestamp = this.getTimestamp();
-      let proportion = 0;
-      if (this.currentTimestamp > timestamp + 1000) {
-        proportion = 1;
-        this.currentTime = this.formatTime(timestamp);
-        this.currentTimestamp = timestamp;
-        this.updateVisible();
-        this.emit();
-      } else {
-        proportion = this.currentTimestamp / timestamp;
-      }
-      const left =
-        this.inWidth * proportion - this.$refs.scaleplateRef.offsetLeft;
-      this.left = -left;
+      const x =
+        (this.currentTimestamp / 86400000) * this.infoWidth +
+        this.infoWidth / 2 -
+        this.$refs.mainRef.offsetWidth / 2;
+      this.left = -x;
     },
-    // 鼠标按下
     down(e) {
-      this.isDown = true;
-      const rect = this.$refs.contentRef.getBoundingClientRect();
+      window.addEventListener("mousemove", this.move);
+      const rect = this.$refs.mainRef.getBoundingClientRect();
       this.downX = e.pageX - rect.left;
-      this.downTime = this.currentTime;
     },
-    // 鼠标松开
-    up() {
-      this.isDown = false;
-      this.emit(true);
-    },
-    emit(check) {
-      this.$nextTick(() => {
-        const start_time = this.time + " " + this.currentTime;
-        const date = new Date(
-          new Date(start_time).getTime() + 1000 * 60 * 60 * 2
-        );
-        let year = this.day.getFullYear();
-        let month = date.getMonth() + 1;
-        let day = date.getDate();
-        month = month < 10 ? "0" + month : month + "";
-        day = day < 10 ? "0" + day : day + "";
-        let hh = date.getHours();
-        let mm = date.getMinutes();
-        let ss = date.getSeconds();
-        hh = hh < 10 ? "0" + hh : hh;
-        mm = mm < 10 ? "0" + mm : mm;
-        ss = ss < 10 ? "0" + ss : ss;
-        const end_time = `${year}-${month}-${day} ${hh}:${mm}:${ss}`;
-        if (check && this.downTime == this.currentTime) return;
-        this.$emit("change", {
-          start_time,
-          end_time,
-        });
-      });
-    },
-    // 鼠标移动
     move(e) {
-      if (!this.isDown) return;
-      const rect = this.$refs.main.getBoundingClientRect();
-      const scaleplate = this.$refs.scaleplateRef;
-      let x = e.pageX - rect.left - this.downX;
-      if (x > scaleplate.offsetLeft) {
-        x = scaleplate.offsetLeft;
-        const rect = this.$refs.contentRef.getBoundingClientRect();
-        this.downX = e.pageX - rect.left;
-      } else if (Math.abs(x) > this.inWidth - scaleplate.offsetLeft) {
-        x = -(this.inWidth - scaleplate.offsetLeft);
-        const rect = this.$refs.contentRef.getBoundingClientRect();
-        this.downX = e.pageX - rect.left;
+      this.isMove = true;
+      const rect = this.$refs.mainRef.getBoundingClientRect();
+      let x = e.pageX - rect.left;
+      if (x < this.downX) {
+        this.currentTimestamp +=
+          1000 * this.proportion * Math.abs(this.downX - x);
+      } else {
+        this.currentTimestamp -=
+          1000 * this.proportion * Math.abs(this.downX - x);
       }
-      this.left = x;
-      this.getCurrentTime(x);
-      this.updateVisible();
+      this.currentTimestamp = this.timeLimit(this.currentTimestamp);
+      this.downX = x;
+      this.currentTime = this.formatTime(this.currentTimestamp);
+      this.location();
+      this.initAxis();
     },
-    // 获取当前标尺选中时间
-    getCurrentTime(offset) {
-      const offsetX = Math.abs(offset - this.$refs.scaleplateRef.offsetLeft);
-      // 计算时间
-      const proportion = offsetX / this.$refs.contentRef.offsetWidth;
-      const timestamp = this.getTimestamp() * proportion;
-      const time = this.formatTime(timestamp);
-      this.currentTime = time;
-      this.currentTimestamp = timestamp;
+    up() {
+      setTimeout(() => {
+        this.isMove &&
+          this.$emit("change", {
+            start_time: this.currentTime,
+            start_timestamp: this.currentTimestamp,
+          });
+        this.isMove = false;
+      }, 0);
+      window.removeEventListener("mousemove", this.move);
     },
-    formatTime(timestamp) {
-      let hh = parseInt((timestamp / 1000 / 60 / 60) % 24);
-      let mm = parseInt((timestamp / 1000 / 60) % 60);
-      let ss = parseInt((timestamp / 1000) % 60);
-      hh = hh < 10 ? "0" + hh : hh;
-      mm = mm < 10 ? "0" + mm : mm;
-      ss = ss < 10 ? "0" + ss : ss;
-      return `${hh}:${mm}:${ss}`;
-    },
-    // 滚动滚轮放大缩小时间刻度
     wheel(e) {
       if (e.wheelDelta > 0) {
         // 缩小刻度
-        if (this.zoom > 0) this.zoom -= 0.05;
+        if (this.proportion > 90) {
+          this.proportion = this.proportion - 2;
+        } else if (this.proportion <= 90 && this.proportion > 60) {
+          this.proportion = this.proportion - 1.8;
+        } else if (this.proportion <= 60 && this.proportion > 45) {
+          this.proportion = this.proportion - 1.2;
+        } else if (this.proportion <= 45 && this.proportion > 30) {
+          this.proportion = this.proportion - 0.9;
+        } else if (this.proportion <= 30 && this.proportion > 20) {
+          this.proportion = this.proportion - 0.6;
+        } else if (this.proportion <= 20 && this.proportion > 15) {
+          this.proportion = this.proportion - 0.4;
+        } else if (this.proportion <= 15 && this.proportion > 10) {
+          this.proportion = this.proportion - 0.3;
+        } else if (this.proportion <= 10 && this.proportion > 5) {
+          this.proportion = this.proportion - 0.2;
+        } else if (this.proportion <= 5 && this.proportion > 3) {
+          this.proportion = this.proportion - 0.1;
+        } else if (this.proportion <= 3 && this.proportion > 1) {
+          this.proportion = this.proportion - 0.06;
+        } else if (this.proportion > 0.5) {
+          this.proportion = this.proportion - 0.02;
+        }
       } else {
         // 放大刻度
-        if (this.zoom < 1) this.zoom += 0.05;
+        if (this.proportion < 120 && this.proportion > 90) {
+          this.proportion = this.proportion + 2;
+        } else if (this.proportion <= 90 && this.proportion > 60) {
+          this.proportion = this.proportion + 1.8;
+        } else if (this.proportion <= 60 && this.proportion > 45) {
+          this.proportion = this.proportion + 1.2;
+        } else if (this.proportion <= 45 && this.proportion > 30) {
+          this.proportion = this.proportion + 0.9;
+        } else if (this.proportion <= 30 && this.proportion > 20) {
+          this.proportion = this.proportion + 0.6;
+        } else if (this.proportion <= 20 && this.proportion > 15) {
+          this.proportion = this.proportion + 0.4;
+        } else if (this.proportion <= 15 && this.proportion > 10) {
+          this.proportion = this.proportion + 0.3;
+        } else if (this.proportion <= 10 && this.proportion > 5) {
+          this.proportion = this.proportion + 0.2;
+        } else if (this.proportion <= 5 && this.proportion > 3) {
+          this.proportion = this.proportion + 0.1;
+        } else if (this.proportion <= 3 && this.proportion > 1) {
+          this.proportion = this.proportion + 0.06;
+        } else {
+          this.proportion = this.proportion + 0.02;
+        }
+        if (this.proportion > 120) {
+          this.proportion = 120;
+        }
       }
-      this.updateTimeLine();
-      this.updateVisible();
+      if (this.proportion > 90) {
+        this.zoom = 120 * (120 / 120);
+      } else if (this.proportion <= 90 && this.proportion > 60) {
+        this.zoom = 120 * (120 / 90);
+      } else if (this.proportion <= 60 && this.proportion > 45) {
+        this.zoom = 120 * (120 / 60);
+      } else if (this.proportion <= 45 && this.proportion > 30) {
+        this.zoom = 120 * (120 / 45);
+      } else if (this.proportion <= 30 && this.proportion > 20) {
+        this.zoom = 120 * (120 / 30);
+      } else if (this.proportion <= 20 && this.proportion > 15) {
+        this.zoom = 120 * (120 / 20);
+      } else if (this.proportion <= 15 && this.proportion > 10) {
+        this.zoom = 120 * (120 / 15);
+      } else if (this.proportion <= 10 && this.proportion > 5) {
+        this.zoom = 120 * (120 / 10);
+      } else if (this.proportion <= 5 && this.proportion > 3) {
+        this.zoom = 120 * (120 / 5);
+      } else if (this.proportion <= 3 && this.proportion > 1) {
+        this.zoom = 120 * (120 / 3);
+      } else {
+        this.zoom = 120 * (120 / 1);
+      }
+      this.initAxis();
+      this.location();
     },
-    // update可视刻度
-    updateVisible() {
-      this.$nextTick(() => {
-        this.lineList.forEach((item) => {
-          item.show = this.isVisible(item);
-        });
+    jump(e) {
+      if (this.isMove) return;
+      const rect = this.$refs.mainRef.getBoundingClientRect();
+      const offsetX =
+        e.pageX - rect.left + Math.abs(this.left) - this.infoWidth / 2;
+      this.currentTimestamp = this.timeLimit(
+        (offsetX / this.infoWidth) * 86400000
+      );
+      this.currentTime = this.formatTime(this.currentTimestamp);
+      this.$emit("change", {
+        start_time: this.currentTime,
+        start_timestamp: this.currentTimestamp,
       });
+      this.$refs.axisRef.style.transition = "left 0.3s";
+      setTimeout(() => {
+        this.$refs.axisRef.style.transition = "none";
+      }, 300);
+      this.location();
+      this.initAxis();
+    },
+    keydown(e) {
+      switch (e.keyCode) {
+        case 37:
+          // 左方向
+          this.currentTimestamp -= 1500 * this.proportion;
+          this.currentTimestamp = this.timeLimit(this.currentTimestamp);
+          this.currentTime = this.formatTime(this.currentTimestamp);
+          this.initAxis();
+          this.location();
+          break;
+        case 39:
+          //  右方向
+          this.currentTimestamp += 1500 * this.proportion;
+          this.currentTimestamp = this.timeLimit(this.currentTimestamp);
+          this.currentTime = this.formatTime(this.currentTimestamp);
+          this.initAxis();
+          this.location();
+          break;
+        case 107:
+          //  放大
+          this.wheel({
+            wheelDelta: 1,
+          });
+          break;
+        case 109:
+          //  缩小
+          this.wheel({
+            wheelDelta: -1,
+          });
+          break;
+      }
+    },
+    keyup(e) {
+      if (e.keyCode == 37 || e.keyCode == 39) {
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+          this.$emit("change", {
+            start_time: this.currentTime,
+            start_timestamp: this.currentTimestamp,
+          });
+        }, 300);
+      }
+    },
+    reset() {
+      this.currentTimestamp = 0;
+      this.currentTime = this.formatTime(this.currentTimestamp);
+      this.location();
+      this.initAxis();
+    },
+    calibration(timestamp) {
+      if (timestamp >= 86400000) return 86400000;
+      const h = Math.floor((timestamp / 1000 / 60 / 60) % 24) * 1000 * 60 * 60;
+      const m = Math.floor((timestamp / 1000 / 60) % 60) * 1000 * 60;
+      const s = Math.round((timestamp / 1000) % 60) * 1000;
+      return h + m + s;
+    },
+    timeLimit(timestamp, type = "deafult") {
+      const today = `${new Date().getFullYear()}-${
+        new Date().getMonth() + 1
+      }-${new Date().getDate()}`;
+      if (this.currentDate == today) {
+        if (type == "deafult") {
+          timestamp = this.calibration(timestamp);
+          return timestamp < 0
+            ? 0
+            : timestamp > this.formatTime(null, "timestamp")
+            ? this.formatTime(null, "timestamp")
+            : timestamp;
+        } else if (type == "boolean") {
+          return timestamp < 0
+            ? false
+            : timestamp > this.formatTime(null, "timestamp")
+            ? false
+            : true;
+        }
+      } else {
+        if (type == "deafult") {
+          timestamp = this.calibration(timestamp);
+          return timestamp < 0
+            ? 0
+            : timestamp > 86399000
+            ? 86399000
+            : timestamp;
+        } else if (type == "boolean") {
+          return timestamp < 0 ? false : timestamp > 86399000 ? false : true;
+        }
+      }
+    },
+    getTimestampLimit() {
+      const x =
+        (this.currentTimestamp / 86400000) * this.infoWidth +
+        this.infoWidth / 2 -
+        this.$refs.mainRef.offsetWidth / 2;
+      let min =
+        ((Math.abs(x) + this.infoWidth / 2) / this.infoWidth) * 86400000;
+      let max =
+        ((Math.abs(x) + this.infoWidth / 2 + this.$refs.mainRef.offsetWidth) /
+          this.infoWidth) *
+        86400000;
+      min = parseInt(min / 1000 / 60 / 60) * 1000 * 60 * 60;
+      if (this.zoom == 120 * (120 / 120)) {
+        if ((min / 1000 / 60 / 60) % 2 !== 0) {
+          min = (min / 1000 / 60 / 60 - 1) * 1000 * 60 * 60;
+        }
+      } else if (this.zoom == 120 * (120 / 90)) {
+        if ((min / 1000 / 60 / 60) % 3 !== 0) {
+          min =
+            (min / 1000 / 60 / 60 - ((min / 1000 / 60 / 60) % 3)) *
+            1000 *
+            60 *
+            60;
+        }
+      } else if (this.zoom == 120 * (120 / 45)) {
+        if ((min / 1000 / 60 / 60) % 3 !== 0) {
+          min =
+            (min / 1000 / 60 / 60 - ((min / 1000 / 60 / 60) % 6)) *
+            1000 *
+            60 *
+            60;
+        }
+      }
+      return {
+        min,
+        max,
+      };
+    },
+    getCurrentTime() {
+      return {
+        start_time: this.currentTime,
+        start_timestamp: this.currentTimestamp,
+      };
     },
   },
 };
 </script>
-<style scope>
+<style lang="less" scoped>
 .timeline_container {
   position: relative;
   height: 45px;
@@ -311,51 +426,58 @@ export default {
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
-}
-.timeline_container:active {
-  cursor: grabbing;
-}
-.timeline_container .scaleplate {
-  position: absolute;
-  width: 2px;
-  height: 100%;
-  left: 50%;
-  top: 0;
-  background-color: #fff;
-  z-index: 10;
-}
-.timeline_container .currentTime {
-  position: absolute;
-  left: 50%;
-  top: 0;
-  transform: translateX(-50%);
-  z-index: 10;
-  font-size: 13px;
-}
-
-.timeline_container .timeline_content {
-  position: relative;
-  background-color: #fdd894;
-  height: 10px;
-  top: 28px;
-  margin: 0;
-}
-.timeline_container .timeline_content .time {
-  position: absolute;
-  display: flex;
-  width: 2px;
-  height: 40px;
-  flex-direction: column;
-  align-items: center;
-  margin-top: -15px;
-}
-.timeline_container .timeline_content .time .line {
-  height: 25px;
-  width: 2px;
-  background-color: rgba(255, 255, 255, 0.5);
-}
-.timeline_container .timeline_content .time .time_item {
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 12px;
+  &:active {
+    cursor: grabbing;
+  }
+  .scaleplate {
+    position: absolute;
+    height: 100%;
+    left: 50%;
+    top: 0;
+    background-color: #fff;
+    z-index: 10;
+  }
+  .currentTime {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    z-index: 10;
+    font-size: 13px;
+    color: #fff;
+  }
+  .timeline_content {
+    position: relative;
+    background-color: #fdd894;
+    height: 10px;
+    top: 28px;
+    margin: 0;
+    cursor: pointer;
+    .time {
+      position: absolute;
+      height: 40px;
+      flex-direction: column;
+      align-items: center;
+      margin-top: -15px;
+      .line {
+        display: block;
+        height: 25px;
+        background-color: rgba(255, 255, 255, 0.7);
+        margin-top: 14px;
+      }
+      .simpleLine {
+        display: block;
+        background-color: rgba(255, 255, 255, 0.7);
+        height: 13px;
+        margin-top: 14px;
+      }
+      .time_item {
+        position: absolute;
+        transform: translateX(-50%);
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 12px;
+      }
+    }
+  }
 }
 </style>
